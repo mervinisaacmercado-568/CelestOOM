@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CelestOOM - Cookies Cream Edition</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #000;
+            touch-action: none; display: flex; flex-direction: column; align-items: center;
+        }
+
+        #game-view {
+            width: 100%;
+            max-width: 80vh;
+            aspect-ratio: 4 / 3;
+            position: relative;
+            background: #111;
+            border: 6px solid #333;
+            image-rendering: pixelated;
+        }
+
+        canvas {
+            width: 100%; height: 100%;
+            image-rendering: pixelated;
+            display: block;
+        }
+
+        #hud-canvas {
+            width: 100%;
+            height: 80px;
+            background: #1a1a1a;
+            border-top: 4px solid #444;
+            image-rendering: pixelated;
+        }
+
+        #controls {
+            flex-grow: 1;
+            width: 100%;
+            background: #151515;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 10px;
+        }
+
+        .dpad {
+            display: grid;
+            grid-template-columns: repeat(3, 60px);
+            grid-template-rows: repeat(3, 60px);
+            gap: 8px;
+        }
+
+        .btn {
+            background: #444; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-family: monospace; border: 3px solid #666;
+            border-radius: 12px; user-select: none; font-weight: bold; font-size: 1.5rem;
+        }
+
+        .btn:active { background: #777; transform: scale(0.95); }
+
+        #fire-btn {
+            width: 110px; height: 110px;
+            background: #e00; border: 5px solid #800;
+            border-radius: 50%; color: #fff; box-shadow: 0 4px 0 #600;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-view">
+    <canvas id="renderCanvas"></canvas>
+    <!-- New Canvas just for the gun to overlap the game -->
+    <canvas id="gunOverlay" width="320" height="240" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; image-rendering: pixelated;"></canvas>
+</div>
+
+<canvas id="hud-canvas" width="320" height="40"></canvas>
+
+<div id="controls">
+    <div class="dpad">
+        <div></div><div class="btn" id="up">▲</div><div></div>
+        <div class="btn" id="left">◀</div><div class="btn"></div><div class="btn" id="right">▶</div>
+        <div></div><div class="btn" id="down">▼</div><div></div>
+    </div>
+    <div class="btn" id="fire-btn">FIRE</div>
+</div>
+
+<script>
+    const canvas = document.getElementById("renderCanvas");
+    const gunCanvas = document.getElementById("gunOverlay");
+    const gctx = gunCanvas.getContext("2d");
+    const hudCanvas = document.getElementById("hud-canvas");
+    const hctx = hudCanvas.getContext("2d");
+    const engine = new BABYLON.Engine(canvas, false);
+    
+    engine.setHardwareScalingLevel(3.5); 
+
+    let ammo = 50;
+    let health = 100;
+    let armor = 100;
+    let doorObj = null;
+    let weaponBob = 0;
+    let recoilY = 0;
+
+    const createScene = () => {
+        const scene = new BABYLON.Scene(engine);
+        scene.clearColor = new BABYLON.Color3(0, 0, 0);
+        scene.gravity = new BABYLON.Vector3(0, -0.15, 0);
+        scene.collisionsEnabled = true;
+
+        const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+        light.intensity = 0.9;
+
+        const camera = new BABYLON.UniversalCamera("camera", new BABYLON.Vector3(0, 2.5, -8), scene);
+        camera.setTarget(new BABYLON.Vector3(0, 2.5, 0));
+        camera.ellipsoid = new BABYLON.Vector3(0.6, 1.2, 0.6); 
+        camera.checkCollisions = true;
+        camera.applyGravity = true;
+        camera.stepOffset = 0.6; 
+        camera.minZ = 0.1;
+
+        const createPixelMat = (hex, name, selfLit = 0.1) => {
+            const mat = new BABYLON.StandardMaterial(name, scene);
+            const tex = new BABYLON.DynamicTexture(name + "Tex", 64, scene, false);
+            const ctx = tex.getContext();
+            ctx.fillStyle = hex; ctx.fillRect(0,0,64,64);
+            for(let i=0; i<150; i++) {
+                ctx.fillStyle = `rgba(0,0,0,0.25)`; ctx.fillRect(Math.random()*64, Math.random()*64, 2, 2);
+            }
+            tex.update();
+            tex.samplingMode = BABYLON.Texture.NEAREST_SAMPLINGMODE;
+            mat.diffuseTexture = tex;
+            mat.emissiveColor = new BABYLON.Color3(selfLit, selfLit, selfLit);
+            mat.specularColor = new BABYLON.Color3(0, 0, 0);
+            return mat;
+        };
+
+        const mWall = createPixelMat("#3a3a3a", "wall");
+        const mFloor = createPixelMat("#112", "floor");
+
+        const buildSolid = (name, w, h, d, x, y, z, mat) => {
+            const box = BABYLON.MeshBuilder.CreateBox(name, {width: w, height: h, depth: d}, scene);
+            box.position.set(x, y, z);
+            box.material = mat;
+            box.checkCollisions = true;
+            return box;
+        };
+
+        buildSolid("base", 30, 0.2, 30, 0, 0, 0, mFloor);
+        buildSolid("w1", 12, 10, 1, -9, 5, 15, mWall);
+        buildSolid("w2", 12, 10, 1, 9, 5, 15, mWall);
+        buildSolid("w3", 1, 10, 30, -15, 5, 0, mWall);
+        buildSolid("w4", 1, 10, 30, 15, 5, 0, mWall);
+        buildSolid("w5", 30, 10, 1, 0, 5, -15, mWall);
+        doorObj = buildSolid("door", 6, 9, 0.5, 0, 4.5, 15, createPixelMat("#666", "dr", 0.2));
+        for(let i=0; i<10; i++) buildSolid("st"+i, 6, 1.2, 2, 0, (i * 0.4), 17 + (i * 1.8), mWall);
+
+        const ramp = BABYLON.MeshBuilder.CreateBox("physRamp", {width: 6, height: 0.2, depth: 22}, scene);
+        ramp.position.set(0, 2.15, 26);
+        ramp.rotation.x = -0.34;
+        ramp.isVisible = false; 
+        ramp.checkCollisions = true;
+
+        buildSolid("up_f", 40, 0.2, 50, 0, 4.0, 50, createPixelMat("#222", "uf"));
+        buildSolid("rampBridge", 6, 0.1, 4, 0, 4.0, 32, createPixelMat("#222", "bridge"));
+        buildSolid("console", 8, 2, 2, 0, 5.1, 40, createPixelMat("#060", "comp", 0.5));
+        const mCrate = createPixelMat("#531", "crate");
+        buildSolid("c1", 3, 3, 3, -8, 5.6, 35, mCrate);
+        buildSolid("c2", 3, 3, 3, 8, 5.6, 45, mCrate);
+        buildSolid("c3", 3, 3, 3, -5, 5.6, 55, mCrate);
+
+        return { scene, camera };
+    };
+
+    const { scene, camera } = createScene();
+
+    const inputs = { up: false, down: false, left: false, right: false };
+    const setupInput = (id, key) => {
+        const el = document.getElementById(id);
+        const start = (e) => { e.preventDefault(); inputs[key] = true; };
+        const end = (e) => { e.preventDefault(); inputs[key] = false; };
+        el.addEventListener("touchstart", start, {passive: false});
+        el.addEventListener("touchend", end, {passive: false});
+        el.addEventListener("mousedown", start); el.addEventListener("mouseup", end);
+    };
+
+    setupInput("up", "up"); setupInput("down", "down");
+    setupInput("left", "left"); setupInput("right", "right");
+
+    document.getElementById("fire-btn").onpointerdown = (e) => {
+        e.preventDefault();
+        if(ammo > 0) {
+            ammo--;
+            recoilY = 15; // Kick up
+            scene.clearColor = new BABYLON.Color4(1, 1, 1, 1);
+            setTimeout(() => scene.clearColor = new BABYLON.Color4(0, 0, 0, 1), 40);
+        }
+    };
+
+    function drawGunSprite() {
+        gctx.clearRect(0,0,320,240);
+        
+        // Target center-bottom where the "head" would be
+        const cx = 160;
+        const cy = 240; 
+        
+        const bobX = Math.sin(weaponBob) * 5;
+        const bobY = Math.abs(Math.cos(weaponBob)) * 3;
+
+        gctx.save();
+        gctx.translate(bobX, -recoilY + bobY);
+
+        // Dark grey metal body
+        gctx.fillStyle = "#222";
+        gctx.fillRect(cx - 10, cy - 40, 20, 40);
+        
+        // Barrels
+        gctx.fillStyle = "#111";
+        gctx.fillRect(cx - 9, cy - 60, 8, 25);
+        gctx.fillRect(cx + 1, cy - 60, 8, 25);
+
+        // Highlights
+        gctx.fillStyle = "#444";
+        gctx.fillRect(cx - 7, cy - 58, 4, 15);
+        gctx.fillRect(cx + 3, cy - 58, 4, 15);
+        
+        gctx.restore();
+    }
+
+    function drawHUD() {
+        hctx.fillStyle = "#111"; hctx.fillRect(0, 0, 320, 40);
+        const drawStat = (x, val) => {
+            hctx.fillStyle = "#900"; hctx.fillRect(x, 5, 50, 30);
+            hctx.fillStyle = "#fff"; hctx.font = "bold 14px monospace";
+            hctx.fillText(val, x + 5, 26);
+        };
+        drawStat(10, ammo); drawStat(70, health + "%"); drawStat(260, armor + "%");
+        // The Head
+        hctx.fillStyle = "#d2b48c"; hctx.fillRect(145, 5, 30, 30);
+    }
+
+    engine.runRenderLoop(() => {
+        const moveSpeed = 0.22;
+        const rotateSpeed = 0.05;
+        if (inputs.left) camera.rotation.y -= rotateSpeed;
+        if (inputs.right) camera.rotation.y += rotateSpeed;
+        let moveVector = BABYLON.Vector3.Zero();
+        const forward = camera.getDirection(BABYLON.Axis.Z);
+        if (inputs.up) moveVector.addInPlace(forward.scale(moveSpeed));
+        if (inputs.down) moveVector.addInPlace(forward.scale(-moveSpeed));
+        moveVector.y = 0; camera._collideWithWorld(moveVector);
+
+        if(inputs.up || inputs.down || inputs.left || inputs.right) weaponBob += 0.2;
+        else weaponBob *= 0.8;
+        recoilY *= 0.8;
+
+        const dist = BABYLON.Vector3.Distance(camera.position, new BABYLON.Vector3(0, 4, 15));
+        doorObj.position.y = BABYLON.Scalar.Lerp(doorObj.position.y, (dist < 6) ? 13 : 4.5, 0.1);
+
+        camera.rotation.x = 0; 
+        scene.render();
+        drawHUD();
+        drawGunSprite();
+    });
+
+    window.addEventListener("resize", () => engine.resize());
+</script>
+</body>
+</html>
+
