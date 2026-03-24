@@ -10,70 +10,27 @@
             margin: 0; padding: 0; width: 100%; height: 100%;
             overflow: hidden; background-color: #000;
             touch-action: none; display: flex; flex-direction: column; align-items: center;
+            font-family: 'Courier New', Courier, monospace;
         }
-
         #game-view {
-            width: 100%;
-            max-width: 80vh;
-            aspect-ratio: 4 / 3;
-            position: relative;
-            background: #111;
-            border: 6px solid #333;
+            width: 100%; max-width: 80vh; aspect-ratio: 4 / 3;
+            position: relative; background: #111; border: 6px solid #333;
             image-rendering: pixelated;
         }
-
-        canvas {
-            width: 100%; height: 100%;
-            image-rendering: pixelated;
-            display: block;
-        }
-
-        #hud-canvas {
-            width: 100%;
-            height: 80px;
-            background: #1a1a1a;
-            border-top: 4px solid #444;
-            image-rendering: pixelated;
-        }
-
-        #controls {
-            flex-grow: 1;
-            width: 100%;
-            background: #151515;
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            padding: 10px;
-        }
-
-        .dpad {
-            display: grid;
-            grid-template-columns: repeat(3, 60px);
-            grid-template-rows: repeat(3, 60px);
-            gap: 8px;
-        }
-
-        .btn {
-            background: #444; color: #fff;
-            display: flex; align-items: center; justify-content: center;
-            font-family: monospace; border: 3px solid #666;
-            border-radius: 12px; user-select: none; font-weight: bold; font-size: 1.5rem;
-        }
-
+        canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+        #hud-canvas { width: 100%; height: 80px; background: #1a1a1a; border-top: 4px solid #444; image-rendering: pixelated; }
+        #controls { flex-grow: 1; width: 100%; background: #151515; display: flex; justify-content: space-around; align-items: center; padding: 10px; }
+        .dpad { display: grid; grid-template-columns: repeat(3, 60px); grid-template-rows: repeat(3, 60px); gap: 8px; }
+        .btn { background: #444; color: #fff; display: flex; align-items: center; justify-content: center; border: 3px solid #666; border-radius: 12px; user-select: none; font-weight: bold; font-size: 1.5rem; cursor: pointer; }
         .btn:active { background: #777; transform: scale(0.95); }
-
-        #fire-btn {
-            width: 110px; height: 110px;
-            background: #e00; border: 5px solid #800;
-            border-radius: 50%; color: #fff; box-shadow: 0 4px 0 #600;
-        }
+        #fire-btn { width: 110px; height: 110px; background: #e00; border: 5px solid #800; border-radius: 50%; color: #fff; box-shadow: 0 4px 0 #600; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; }
+        #fire-btn:active { box-shadow: none; transform: translateY(4px); }
     </style>
 </head>
 <body>
 
 <div id="game-view">
     <canvas id="renderCanvas"></canvas>
-    <!-- New Canvas just for the gun to overlap the game -->
     <canvas id="gunOverlay" width="320" height="240" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; image-rendering: pixelated;"></canvas>
 </div>
 
@@ -85,7 +42,7 @@
         <div class="btn" id="left">◀</div><div class="btn"></div><div class="btn" id="right">▶</div>
         <div></div><div class="btn" id="down">▼</div><div></div>
     </div>
-    <div class="btn" id="fire-btn">FIRE</div>
+    <div id="fire-btn">FIRE</div>
 </div>
 
 <script>
@@ -94,8 +51,8 @@
     const gctx = gunCanvas.getContext("2d");
     const hudCanvas = document.getElementById("hud-canvas");
     const hctx = hudCanvas.getContext("2d");
-    const engine = new BABYLON.Engine(canvas, false);
     
+    const engine = new BABYLON.Engine(canvas, false);
     engine.setHardwareScalingLevel(3.5); 
 
     let ammo = 50;
@@ -103,7 +60,19 @@
     let armor = 100;
     let doorObj = null;
     let weaponBob = 0;
+    let headBobPhase = 0;
     let recoilY = 0;
+
+    let moveVelocity = 0;
+    let turnVelocity = 0;
+    const maxMoveSpeed = 0.25;
+    const acceleration = 0.04;
+    const friction = 0.85;
+    const maxTurnSpeed = 0.06;
+    const turnAcceleration = 0.012;
+    const turnFriction = 0.8;
+
+    const baseEyeHeight = 0.8; 
 
     const createScene = () => {
         const scene = new BABYLON.Scene(engine);
@@ -114,12 +83,15 @@
         const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
         light.intensity = 0.9;
 
-        const camera = new BABYLON.UniversalCamera("camera", new BABYLON.Vector3(0, 2.5, -8), scene);
-        camera.setTarget(new BABYLON.Vector3(0, 2.5, 0));
-        camera.ellipsoid = new BABYLON.Vector3(0.6, 1.2, 0.6); 
-        camera.checkCollisions = true;
-        camera.applyGravity = true;
-        camera.stepOffset = 0.6; 
+        const playerBody = BABYLON.MeshBuilder.CreateCapsule("player", {height: 2.5, radius: 0.6}, scene);
+        playerBody.position.set(0, 2.5, -8);
+        playerBody.isVisible = false;
+        playerBody.checkCollisions = true;
+        playerBody.ellipsoid = new BABYLON.Vector3(0.6, 1.2, 0.6);
+
+        const camera = new BABYLON.UniversalCamera("camera", new BABYLON.Vector3(0, baseEyeHeight, 0), scene);
+        camera.parent = playerBody; 
+        camera.setTarget(new BABYLON.Vector3(0, baseEyeHeight, 10));
         camera.minZ = 0.1;
 
         const createPixelMat = (hex, name, selfLit = 0.1) => {
@@ -128,7 +100,8 @@
             const ctx = tex.getContext();
             ctx.fillStyle = hex; ctx.fillRect(0,0,64,64);
             for(let i=0; i<150; i++) {
-                ctx.fillStyle = `rgba(0,0,0,0.25)`; ctx.fillRect(Math.random()*64, Math.random()*64, 2, 2);
+                ctx.fillStyle = `rgba(0,0,0,0.25)`; 
+                ctx.fillRect(Math.random()*64, Math.random()*64, 2, 2);
             }
             tex.update();
             tex.samplingMode = BABYLON.Texture.NEAREST_SAMPLINGMODE;
@@ -156,111 +129,117 @@
         buildSolid("w4", 1, 10, 30, 15, 5, 0, mWall);
         buildSolid("w5", 30, 10, 1, 0, 5, -15, mWall);
         doorObj = buildSolid("door", 6, 9, 0.5, 0, 4.5, 15, createPixelMat("#666", "dr", 0.2));
+        
         for(let i=0; i<10; i++) buildSolid("st"+i, 6, 1.2, 2, 0, (i * 0.4), 17 + (i * 1.8), mWall);
 
         const ramp = BABYLON.MeshBuilder.CreateBox("physRamp", {width: 6, height: 0.2, depth: 22}, scene);
-        ramp.position.set(0, 2.15, 26);
-        ramp.rotation.x = -0.34;
+        ramp.position.set(0, 2.0, 26.0); 
+        ramp.rotation.x = -0.36; 
         ramp.isVisible = false; 
         ramp.checkCollisions = true;
 
-        buildSolid("up_f", 40, 0.2, 50, 0, 4.0, 50, createPixelMat("#222", "uf"));
-        buildSolid("rampBridge", 6, 0.1, 4, 0, 4.0, 32, createPixelMat("#222", "bridge"));
-        buildSolid("console", 8, 2, 2, 0, 5.1, 40, createPixelMat("#060", "comp", 0.5));
+        buildSolid("up_f", 40, 0.2, 50, 0, 4.0, 61, createPixelMat("#222", "uf"));
+        buildSolid("rampBridge", 6, 0.4, 10, 0, 4.0, 38, createPixelMat("#222", "bridge"));
+        
+        buildSolid("console", 8, 2, 2, 0, 5.1, 45, createPixelMat("#060", "comp", 0.5));
         const mCrate = createPixelMat("#531", "crate");
-        buildSolid("c1", 3, 3, 3, -8, 5.6, 35, mCrate);
-        buildSolid("c2", 3, 3, 3, 8, 5.6, 45, mCrate);
-        buildSolid("c3", 3, 3, 3, -5, 5.6, 55, mCrate);
+        buildSolid("c1", 3, 3, 3, -8, 5.6, 42, mCrate);
+        buildSolid("c2", 3, 3, 3, 8, 5.6, 52, mCrate);
+        buildSolid("c3", 3, 3, 3, -5, 5.6, 62, mCrate);
 
-        return { scene, camera };
+        return { scene, camera, playerBody };
     };
 
-    const { scene, camera } = createScene();
-
+    const { scene, camera, playerBody } = createScene();
     const inputs = { up: false, down: false, left: false, right: false };
+    
     const setupInput = (id, key) => {
         const el = document.getElementById(id);
         const start = (e) => { e.preventDefault(); inputs[key] = true; };
         const end = (e) => { e.preventDefault(); inputs[key] = false; };
         el.addEventListener("touchstart", start, {passive: false});
         el.addEventListener("touchend", end, {passive: false});
-        el.addEventListener("mousedown", start); el.addEventListener("mouseup", end);
+        el.addEventListener("mousedown", start); 
+        window.addEventListener("mouseup", end);
     };
 
     setupInput("up", "up"); setupInput("down", "down");
     setupInput("left", "left"); setupInput("right", "right");
 
-    document.getElementById("fire-btn").onpointerdown = (e) => {
+    document.getElementById("fire-btn").addEventListener("pointerdown", (e) => {
         e.preventDefault();
         if(ammo > 0) {
             ammo--;
-            recoilY = 15; // Kick up
+            recoilY = 15;
             scene.clearColor = new BABYLON.Color4(1, 1, 1, 1);
             setTimeout(() => scene.clearColor = new BABYLON.Color4(0, 0, 0, 1), 40);
         }
-    };
+    });
 
     function drawGunSprite() {
         gctx.clearRect(0,0,320,240);
-        
-        // Target center-bottom where the "head" would be
-        const cx = 160;
-        const cy = 240; 
-        
-        const bobX = Math.sin(weaponBob) * 5;
-        const bobY = Math.abs(Math.cos(weaponBob)) * 3;
-
+        const cx = 160; const cy = 240; 
+        const bobX = Math.sin(weaponBob) * 10; // Slightly heavier weapon bob
+        const bobY = Math.abs(Math.cos(weaponBob)) * 6;
         gctx.save();
         gctx.translate(bobX, -recoilY + bobY);
-
-        // Dark grey metal body
-        gctx.fillStyle = "#222";
-        gctx.fillRect(cx - 10, cy - 40, 20, 40);
-        
-        // Barrels
-        gctx.fillStyle = "#111";
-        gctx.fillRect(cx - 9, cy - 60, 8, 25);
-        gctx.fillRect(cx + 1, cy - 60, 8, 25);
-
-        // Highlights
-        gctx.fillStyle = "#444";
-        gctx.fillRect(cx - 7, cy - 58, 4, 15);
-        gctx.fillRect(cx + 3, cy - 58, 4, 15);
-        
+        gctx.fillStyle = "#222"; gctx.fillRect(cx - 10, cy - 40, 20, 40);
+        gctx.fillStyle = "#111"; gctx.fillRect(cx - 9, cy - 60, 8, 25); gctx.fillRect(cx + 1, cy - 60, 8, 25);
+        gctx.fillStyle = "#444"; gctx.fillRect(cx - 7, cy - 58, 4, 15); gctx.fillRect(cx + 3, cy - 58, 4, 15);
         gctx.restore();
     }
 
     function drawHUD() {
         hctx.fillStyle = "#111"; hctx.fillRect(0, 0, 320, 40);
-        const drawStat = (x, val) => {
-            hctx.fillStyle = "#900"; hctx.fillRect(x, 5, 50, 30);
+        const drawStat = (x, val, color = "#900") => {
+            hctx.fillStyle = color; hctx.fillRect(x, 5, 50, 30);
             hctx.fillStyle = "#fff"; hctx.font = "bold 14px monospace";
             hctx.fillText(val, x + 5, 26);
         };
-        drawStat(10, ammo); drawStat(70, health + "%"); drawStat(260, armor + "%");
-        // The Head
+        drawStat(10, ammo); drawStat(70, health + "%"); drawStat(260, armor + "%", "#009");
         hctx.fillStyle = "#d2b48c"; hctx.fillRect(145, 5, 30, 30);
+        hctx.fillStyle = "#000"; hctx.fillRect(150, 15, 4, 4); hctx.fillRect(166, 15, 4, 4);
     }
 
     engine.runRenderLoop(() => {
-        const moveSpeed = 0.22;
-        const rotateSpeed = 0.05;
-        if (inputs.left) camera.rotation.y -= rotateSpeed;
-        if (inputs.right) camera.rotation.y += rotateSpeed;
-        let moveVector = BABYLON.Vector3.Zero();
-        const forward = camera.getDirection(BABYLON.Axis.Z);
-        if (inputs.up) moveVector.addInPlace(forward.scale(moveSpeed));
-        if (inputs.down) moveVector.addInPlace(forward.scale(-moveSpeed));
-        moveVector.y = 0; camera._collideWithWorld(moveVector);
+        if (inputs.left) turnVelocity = Math.max(turnVelocity - turnAcceleration, -maxTurnSpeed);
+        else if (inputs.right) turnVelocity = Math.min(turnVelocity + turnAcceleration, maxTurnSpeed);
+        else turnVelocity *= turnFriction;
+        playerBody.rotation.y += turnVelocity;
 
-        if(inputs.up || inputs.down || inputs.left || inputs.right) weaponBob += 0.2;
-        else weaponBob *= 0.8;
+        if (inputs.up) moveVelocity = Math.min(moveVelocity + acceleration, maxMoveSpeed);
+        else if (inputs.down) moveVelocity = Math.max(moveVelocity - acceleration, -maxMoveSpeed);
+        else moveVelocity *= friction;
+
+        playerBody.moveWithCollisions(new BABYLON.Vector3(0, -0.15, 0));
+
+        if (Math.abs(moveVelocity) > 0.001) {
+            const forward = playerBody.getDirection(BABYLON.Axis.Z);
+            let moveVector = forward.scale(moveVelocity);
+            playerBody.moveWithCollisions(moveVector);
+        }
+
+        // --- HEAVIER & MORE AESTHETIC BOBBING ---
+        if(Math.abs(moveVelocity) > 0.01) {
+            headBobPhase += 0.22; // Faster oscillation
+            weaponBob += 0.2;
+            const bobIntensity = 0.25 * (Math.abs(moveVelocity) / maxMoveSpeed); // Increased intensity
+            
+            // Vertical Bobbing
+            camera.position.y = baseEyeHeight + (Math.sin(headBobPhase) * bobIntensity);
+            // Horizontal Swaying (The "aesthetic" part)
+            camera.position.x = (Math.cos(headBobPhase * 0.5) * (bobIntensity * 0.5));
+        } else {
+            camera.position.y = BABYLON.Scalar.Lerp(camera.position.y, baseEyeHeight, 0.1);
+            camera.position.x = BABYLON.Scalar.Lerp(camera.position.x, 0, 0.1);
+            headBobPhase = 0;
+            weaponBob *= 0.8;
+        }
+        
         recoilY *= 0.8;
-
-        const dist = BABYLON.Vector3.Distance(camera.position, new BABYLON.Vector3(0, 4, 15));
+        const dist = BABYLON.Vector3.Distance(playerBody.position, new BABYLON.Vector3(0, 4, 15));
         doorObj.position.y = BABYLON.Scalar.Lerp(doorObj.position.y, (dist < 6) ? 13 : 4.5, 0.1);
 
-        camera.rotation.x = 0; 
         scene.render();
         drawHUD();
         drawGunSprite();
